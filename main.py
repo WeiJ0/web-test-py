@@ -1,13 +1,18 @@
 from selenium import webdriver
 from selenium.webdriver.safari.options import Options
 from selenium.webdriver.common.by import By
+import sys
+import os
 import time
 import re
-import tkinter as tk
 import json
+import sqlite3
+import uuid
 
 def checkHaveAdElement(driver):
     adElements = driver.find_elements(By.CSS_SELECTOR, "[id^='ad'],[class^='ad']")
+    # 排除 id & class 為 address
+    adElements = [element for element in adElements if element.get_attribute('id') != 'address' and element.get_attribute('class') != 'address']
     if len(adElements) > 0:
         print('具有 ad 開頭的元素有:')
         for element in adElements:
@@ -21,138 +26,121 @@ def checkHaveAdElement(driver):
     
 def recordHeaderElements(driver):
     result = {}
-    for i in range(1, 6):
-        headerTextElements = driver.find_elements(By.CSS_SELECTOR,'h' + str(i))
-        if len(headerTextElements) > 0:
-            result['h' + str(i)] = []
-            for element in headerTextElements:
-                text_without_newlines = element.text.replace('\n', '')
-                text_without_newlines = text_without_newlines.replace(' ', '')
-                text_without_newlines = re.sub(r"\s+", "", text_without_newlines)
-                result['h' + str(i)].append(text_without_newlines)
-        else:
-            result['h' + str(i)] = []
+    result = driver.execute_script("return [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(item => item.nodeName + ':' + item.innerText.trim())")
     return result
 
-def getScreenshot(driver, current_page, device_name, device_width):    
-    total_height = driver.execute_script("return document.body.parentNode.scrollHeight")        
-    driver.set_window_size( device_width, total_height)   
-    driver.refresh()
-    # 模擬慢慢滾動到底部
-    for i in range(0, total_height, 100):
-        driver.execute_script("window.scrollTo(0, {});".format(i))
-        time.sleep(0.1)
+def getScreenshot(driver, current_page, device_name, id):        
+    # driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")    
+    required_width = driver.execute_script('return document.documentElement.scrollWidth')
+    required_height = driver.execute_script('return document.documentElement.scrollHeight')
+    driver.set_window_size(required_width, required_height)    
+    time.sleep(2.5)
+    driver.save_screenshot('./' + id + '/' +current_page + '_' + device_name + '.png')    
 
-    # 等到網頁載入完畢
-    time.sleep(5)                   
-    driver.save_screenshot(current_page + '-' + device_name + '.png')
-    driver.execute_script('$(".slideMenuTrigger").click()')
-    time.sleep(3)
-    driver.save_screenshot(current_page + '-' + device_name + 'menuOpen.png')
+def createRecord(id):
+    conn = sqlite3.connect('db.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO result (run_id, is_done, run_time) VALUES ('" + id + "', 0, datetime('now'))");
+    conn.commit()
+    conn.close()
 
-def initialize_driver_with_user_agent(user_agent):    
-    options = Options()
-    options.add_argument('--user-agent=' + user_agent)
-    print('user_agent: ' + user_agent)
-    driver = webdriver.Safari(Options)
-    return driver
-
-
-# user agent
-user_agents = {
-    'Desktop': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)',            
-    'iPad': 'Mozilla/5.0 (iPad; CPU OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)',
-    'iPhone': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',                
-}
+def updateRecord(id):
+    conn = sqlite3.connect('db.db')
+    c = conn.cursor()
+    c.execute("UPDATE result SET is_done = 1 WHERE run_id = '" + id + "'");
+    conn.commit()
+    conn.close()
 
 # 先將各個裝置尺寸變成物件
 device_configs = {
-    'iPhone 6': {'width': 375, 'height': 667, 'user_agent': user_agents['iPhone']},
-    'iPhone 6 Plus': {'width': 414, 'height': 736, 'user_agent': user_agents['iPhone']},
-    'iPhone SE': {'width': 320, 'height': 568, 'user_agent': user_agents['iPhone']},
-    'iPad': {'width': 768, 'height': 1024, 'user_agent': user_agents['iPad']},
-    'iPad Pro': {'width': 1024, 'height': 1366, 'user_agent': user_agents['iPad']},
-    'macbook': {'width': 1440, 'height': 900, 'user_agent': user_agents['Desktop']},
-    'Desktop': {'width': 1920, 'height': 1080, 'user_agent': user_agents['Desktop']},
-    'iMac': {'width': 2560, 'height': 1440, 'user_agent': user_agents['Desktop']},
+    'Desktop': {'width': 1920, 'height': 1080},
+    'iPhone 6': {'width': 375, 'height': 667},
+    'iPhone 6 Plus': {'width': 414, 'height': 736},
+    'iPhone SE': {'width': 320, 'height': 568},
+    'iPad': {'width': 768, 'height': 1024},
+    'iPad Pro': {'width': 1024, 'height': 1366},
+    'macbook': {'width': 1440, 'height': 900},
+    'iMac': {'width': 2560, 'height': 1440},
 }
 
-def submit():
-    # 設定目標網址 (首頁)
-    targetURL = input_text.get()
-    # 設定單元網址名稱
-    units = textarea.get("1.0", "end-1c").split('\n')    
+print(sys.argv)
 
-    pages = []
-    pages.append(targetURL)
+# 參數 -P 網址
+targetURL = sys.argv[1]
 
-    # 將所有單元整理成 array
-    for unit in units:
-        pages.append(targetURL + unit)
-    # 儲存結果的物件
-    result = {}
+# 參數 -U 單元
 
-    for device_name, device_config in device_configs.items():        
-        driver = initialize_driver_with_user_agent(device_config['user_agent'])
-        driver.set_window_size(device_config['width'], device_config['height'])
-        # 進入目標網址 設定 cookie temporaryVerifyCode = ok 避免驗證
-        driver.add_cookie({'name':'temporaryVerifyCode', 'value':'ok', 'domain': 'ibestpark2.ito.tw'})
-        for page in pages:
-            driver.get(page)
-            # 重新整理跳開 loading 畫面
-            user_agent = driver.execute_script("return navigator.userAgent")
-            print('user_agent: ' + user_agent)
-            driver.refresh()
-            # 顯示進入網站的提示
-            print('進入網站:' + page)       
-            result[page] = {} 
+if len(sys.argv) >= 3:    
+    units = sys.argv[2].split(',')  
+else:
+    units = []
 
-            if result[page].get('hasADElement') == None:
-                # 寫入 result 物件格式為 {page: {'hasADElement': outerHTML}}           
-                print('檢查是否有廣告元素')
-                result[page]['hasADElement'] = checkHaveAdElement(driver)
-            
-            if result[page].get('headerElement') == None:
-                # 寫入 result 物件格式為 {page: { 'headerElement' : {h1: [], h2: [], h3: [], h4: [], h5: []}}}
-                print('檢查是否有標題元素')
-                result[page]['headerElement'] = recordHeaderElements(driver)
+pages = []
+pages.append(targetURL)
 
-            # 若當前頁面為首頁，則將頁面名稱設為 index
-            current_page = page == targetURL and 'index' or page.replace(targetURL, '')
-            # 進行截圖
-            getScreenshot(driver, current_page, device_name, device_config['width'])           
+# 將所有單元整理成 array
+for unit in units:
+    pages.append(targetURL + unit)
 
-            # 回傳執行 js getCopy() 的結果
-            if result.get('getCopy') == None:
-                copy_result = driver.execute_script('return getCopy()')            
-                result['getCopy'] = copy_result
+# 儲存結果的物件
+result = {}
 
-    # 輸出 result 物件成 json 到 result.json    
-    with open('result.json', 'w') as fp:
-        json.dump(result, fp, ensure_ascii=False)        
+id = str(uuid.uuid4())
+createRecord(id)
+
+# 根目錄建立一個名為 id 的資料夾
+if not os.path.exists(id):
+    os.makedirs(id)
+
+# 開啟瀏覽器
+options = Options()
+options.add_argument('--headless')
+driver = webdriver.Safari(Options)
+
+driver.set_window_size(1920, 1080)
+# 進入目標網址 設定 cookie temporaryVerifyCode = ok 避免驗證
+driver.add_cookie({'name':'temporaryVerifyCode', 'value':'ok', 'domain': 'park-ibf2011.ito.tw'})
+
+for page in pages:
+    driver.get(page)
+    # 重新整理跳開 loading 畫面        
+    driver.refresh()
+    # 顯示進入網站的提示
+    print('進入網站:' + page)       
+    result[page] = {}         
+
+    # 移除淡入淡出動畫
+    driver.execute_script("if(window.sr) Object.values(sr.store.elements).map(item => item.domEl).forEach(item => {item.removeAttribute('style')})")
+    driver.execute_script("if(window.sr) Object.values(sr.store.elements).map(item => [item.config.beforeReveal,item.config.afterReveal]).forEach(item => {item[0](),item[1]()})")
+    # 移除 lazyload
+    driver.execute_script("[...document.querySelectorAll('.observerSlick, .observer')].forEach(item => item.classList.add('loaded'))")        
+    # 暫停輪播
+    driver.execute_script("$('.slick-slider').each(function(index,item) {$(item).slick('slickPause')});")
+
+    if result[page].get('hasADElement') == None:
+        # 寫入 result 物件格式為 {page: {'hasADElement': outerHTML}}           
+        print('檢查是否有廣告元素')
+        result[page]['hasADElement'] = checkHaveAdElement(driver)
     
-    # 關閉瀏覽器
-    driver.quit()
+    if result[page].get('headerElement') == None:
+        # 寫入 result 物件格式為 {page: { 'headerElement' : {h1: [], h2: [], h3: [], h4: [], h5: []}}}
+        print('檢查是否有標題元素')
+        result[page]['headerElement'] = recordHeaderElements(driver)
 
+    # 若當前頁面為首頁，則將頁面名稱設為 index
+    current_page = page == targetURL and 'index' or page.replace(targetURL, '')
+    # 進行截圖
+    for device_name, device_config in device_configs.items():        
+        driver.set_window_size(device_config['width'], device_config['height'])
+        # 暫停 1 秒等待網頁元素讀取
+        time.sleep(1)
+        getScreenshot(driver, current_page, device_name, id)           
 
-# 以下為 GUI 程式碼
-root = tk.Tk()
+# 輸出 result 物件成 json 到 result.json    
+with open('result.json', 'w') as fp:
+    json.dump(result, fp, ensure_ascii=False)
 
-input_label = tk.Label(root, text="目標網址：")
-input_label.pack()
+updateRecord(id)
 
-input_text = tk.Entry(root, width=40)
-input_text.pack()
-
-textarea_label = tk.Label(root, text="單元網址名稱：")
-textarea_label.pack()
-
-textarea = tk.Text(root, height=20, width=80)
-textarea.pack()
-
-submit_button = tk.Button(root, text="送出", command=submit)
-submit_button.pack()
-
-root.mainloop()
-
-
+# 關閉瀏覽器
+driver.quit()
