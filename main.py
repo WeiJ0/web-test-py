@@ -112,6 +112,8 @@ for page in pages:
     # 移除淡入淡出動畫
     driver.execute_script("if(window.sr) Object.values(sr.store.elements).map(item => item.domEl).forEach(item => {item.removeAttribute('style')})")
     driver.execute_script("if(window.sr) Object.values(sr.store.elements).map(item => [item.config.beforeReveal,item.config.afterReveal]).forEach(item => {item[0](),item[1]()})")
+    ### todo 移除 scrollReveal 的 resize & scroll 事件
+    
     # 移除 lazyload
     driver.execute_script("[...document.querySelectorAll('.observerSlick, .observer')].forEach(item => item.classList.add('loaded'))")        
     # 暫停輪播
